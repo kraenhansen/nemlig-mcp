@@ -7,7 +7,10 @@ requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
     "mcp>=2.0.0",
-    "nemlig-cli",
+    # Needs the library-friendly fixes merged in eisbaw/nemlig_cli#3 (tty-gated
+    # spinner, optional deps as extras). Not on PyPI, so installed from git;
+    # uv.lock pins the exact commit.
+    "nemlig-cli @ git+https://github.com/eisbaw/nemlig_cli.git@main",
 ]
 
 [project.scripts]
@@ -18,11 +21,11 @@ dev = [
     "pytest>=8.0.0",
 ]
 
-# Local development: use the sibling checkout of the CLI rather than the
-# published package, so changes there are picked up immediately.
-# For a standalone install, drop this section and depend on the git URL.
-[tool.uv.sources]
-nemlig-cli = { path = "../nemlig_cli", editable = true }
+# To develop against a local checkout of the CLI instead of the pinned commit,
+# uncomment this and run `uv sync`:
+#
+# [tool.uv.sources]
+# nemlig-cli = { path = "../nemlig_cli", editable = true }
 
 [build-system]
 requires = ["hatchling"]
@@ -30,3 +33,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/nemlig_mcp"]
+
+# nemlig-cli is installed from a git URL (it is not on PyPI), which hatchling
+# treats as a direct reference and rejects by default.
+[tool.hatch.metadata]
+allow-direct-references = true

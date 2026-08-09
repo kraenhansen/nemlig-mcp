@@ -39,26 +39,16 @@ leave the server. See [`privacy.py`](src/nemlig_mcp/privacy.py).
 
 ## Setup
 
-### 1. Clone both repos as siblings
-
-`pyproject.toml` resolves the CLI through a relative path, so the directory
-names and layout matter:
-
-```
-your-code-dir/
-├── nemlig_cli/     <- underscore
-└── nemlig-mcp/     <- hyphen
-```
+### 1. Install
 
 ```bash
-cd ~/code
-git clone https://github.com/eisbaw/nemlig_cli.git
 git clone https://github.com/kraenhansen/nemlig-mcp.git
 cd nemlig-mcp
 uv sync
 ```
 
-Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+.
+Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+. `nemlig_cli` is
+pulled from git automatically — no separate checkout needed.
 
 ### 2. Provide credentials
 
@@ -119,30 +109,34 @@ Troubleshooting:
 | Symptom | Cause |
 |---|---|
 | `No nemlig.com credentials found` | Step 2 not done, or the config file is not valid JSON |
-| `ModuleNotFoundError: nemlig_cli` | Repos are not siblings, or the CLI directory is not named `nemlig_cli` |
+| `ModuleNotFoundError: nemlig_cli` | `uv sync` did not complete — rerun it |
 | Tool calls fail with `HTTPError` | Wrong username/password — nemlig returns 401 from the login endpoint |
 
-## Notes on the upstream CLI
+## Relationship to the upstream CLI
 
-Two things this package works around, both worth fixing upstream:
+Building this surfaced two problems in `nemlig_cli`, both fixed upstream in
+[eisbaw/nemlig_cli#3](https://github.com/eisbaw/nemlig_cli/pull/3):
 
-1. **Progress spinners write to stdout**, including from a background thread in
-   `login()`. On a stdio MCP server stdout *is* the JSON-RPC transport, so every
-   CLI call is wrapped in a redirect ([`_compat.py`](src/nemlig_mcp/_compat.py)).
-   Fix: print progress to stderr.
-2. **Optional dependencies are declared as required.** `opencv-python`, `pyzbar`,
-   `Pillow`, `anthropic`, `google-api-python-client` and `openfoodfacts` are all
-   guarded with `try/except ImportError` in the code, but listed as hard
-   dependencies, so installing the CLI as a library pulls in all of them. Fix:
-   move them to `[project.optional-dependencies]`.
+1. **`login()` could hang forever.** The progress spinner was started before the
+   request sequence but only stopped on the success path, on a non-daemon
+   thread — so a wrong password left the process spinning instead of raising.
+2. **Progress was written to stdout**, which on a stdio MCP server is the
+   JSON-RPC transport. It now renders to stderr, and only when stderr is a tty.
+
+Because of that fix, `nemlig-cli` is pinned to a commit that includes it. The
+`quiet()` wrapper in [`_compat.py`](src/nemlig_mcp/_compat.py) is kept anyway:
+a single stray `print()` anywhere in a dependency would corrupt the protocol
+stream, and that is cheap insurance against a failure mode this severe.
 
 ## Development
 
 ```bash
-uv run pytest
+uv run pytest                        # 6 tests, no network, no credentials
+uv run python tests/smoke_stdio.py   # end-to-end over stdio
 ```
 
-The tests make no network calls and need no credentials.
+To work against a local checkout of the CLI, uncomment the `[tool.uv.sources]`
+block in `pyproject.toml` and clone `nemlig_cli` as a sibling directory.
 
 ## Disclaimer
 
