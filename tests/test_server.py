@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import io
 import sys
+from unittest import mock
 
 import pytest
 
 from nemlig_mcp._compat import quiet
 from nemlig_mcp.privacy import REDACTED, scrub
-from nemlig_mcp.server import server
+from nemlig_mcp.server import server, set_basket_quantity
 
 
 @pytest.mark.anyio
@@ -19,7 +20,7 @@ async def test_expected_tools_are_registered():
         "search_products",
         "get_product_details",
         "get_basket",
-        "add_to_basket",
+        "set_basket_quantity",
         "get_order_history",
         "get_order_details",
     }
@@ -34,13 +35,53 @@ async def test_no_tool_can_place_an_order_or_read_cards():
 
 
 @pytest.mark.anyio
-async def test_only_add_to_basket_is_a_write():
+async def test_only_set_basket_quantity_is_a_write():
     writes = {
         tool.name
         for tool in await server.list_tools()
         if not (tool.annotations and tool.annotations.read_only_hint)
     }
-    assert writes == {"add_to_basket"}
+    assert writes == {"set_basket_quantity"}
+
+
+@pytest.mark.anyio
+async def test_set_basket_quantity_is_flagged_destructive():
+    """The quantity is absolute, so lowering it deletes units. Clients rely on
+    this hint to decide whether to confirm with the user first."""
+    tool = next(t for t in await server.list_tools() if t.name == "set_basket_quantity")
+    assert tool.annotations.destructive_hint is True
+
+
+@pytest.mark.anyio
+async def test_set_basket_quantity_describes_absolute_semantics():
+    """A model reading 'how many to add' would silently truncate a line."""
+    tool = next(t for t in await server.list_tools() if t.name == "set_basket_quantity")
+    assert "absolute" in tool.description.lower()
+    assert "0 removes" in tool.description
+
+
+def test_set_basket_quantity_allows_zero_but_not_negative():
+    """0 is the only way to remove a product, so it must not be rejected."""
+    with pytest.raises(ValueError):
+        set_basket_quantity("701025", -1)
+
+    # 0 must get past validation and reach the API layer; stop it there rather
+    # than talking to nemlig.com, so this stays a credential-free unit test.
+    calls: list[tuple[str, int]] = []
+
+    class Boom(Exception):
+        pass
+
+    def fake_call(fn, *args):
+        calls.append(args)
+        raise Boom
+
+    with mock.patch("nemlig_mcp.server.get_client") as get_client:
+        get_client.return_value.call = fake_call
+        with pytest.raises(Boom):
+            set_basket_quantity("701025", 0)
+
+    assert calls == [("701025", 0)]
 
 
 def test_scrub_removes_addresses_but_keeps_line_items():

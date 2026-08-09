@@ -14,7 +14,7 @@ curated tool surface.
 | `search_products` | no | Search the catalogue |
 | `get_product_details` | no | Nutrition, allergens, attributes |
 | `get_basket` | no | Current basket contents |
-| `add_to_basket` | **yes** | Add a product to the basket |
+| `set_basket_quantity` | **yes** | Set units of a product in the basket (0 removes it) |
 | `get_order_history` | no | Previous orders |
 | `get_order_details` | no | Line items of one past order |
 
@@ -27,8 +27,14 @@ server does not add them.
 
 The tool surface is an allowlist, not a filtered view of the whole API, so an
 endpoint cannot become reachable by accident. A test asserts this
-([`tests/test_server.py`](tests/test_server.py)). `add_to_basket` is the only
-tool that changes state, and filling a basket is reversible on the website.
+([`tests/test_server.py`](tests/test_server.py)). `set_basket_quantity` is the
+only tool that changes state, and every change it makes is reversible on the
+website.
+
+It is annotated `destructive_hint=True`, because its quantity is absolute
+rather than a delta: lowering it discards units already in the basket, and 0
+removes the line. Clients use that hint to decide whether to confirm with the
+user, so understating it would be the dangerous direction to be wrong in.
 
 ## Privacy
 
@@ -96,7 +102,7 @@ and make sure the file is gitignored:
 ### 4. Verify
 
 ```bash
-uv run pytest                        # 6 tests, no network, no credentials
+uv run pytest                        # 9 tests, no network, no credentials
 uv run python tests/smoke_stdio.py   # spawns the server, lists its tools
 ```
 
@@ -131,7 +137,7 @@ stream, and that is cheap insurance against a failure mode this severe.
 ## Development
 
 ```bash
-uv run pytest                        # 6 tests, no network, no credentials
+uv run pytest                        # 9 tests, no network, no credentials
 uv run python tests/smoke_stdio.py   # end-to-end over stdio
 ```
 

@@ -23,8 +23,9 @@ server = MCPServer(
     instructions=(
         "Search and shop groceries on nemlig.com (Danish online supermarket). "
         "Prices are in DKK. Product names and categories are in Danish. "
-        "This server can read the basket and add items to it, but cannot place "
-        "an order -- the user must complete checkout themselves on nemlig.com."
+        "This server can read the basket and change what is in it, including "
+        "removing items, but cannot place an order -- the user must complete "
+        "checkout themselves on nemlig.com."
     ),
 )
 
@@ -44,7 +45,10 @@ def get_client() -> NemligClient:
 
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=True)
-WRITES = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=True)
+# destructive_hint is True because the quantity is absolute: lowering it drops
+# units already in the basket, and 0 removes the line outright. This is not an
+# additive-only tool, and a client deciding whether to confirm must know that.
+WRITES = ToolAnnotations(read_only_hint=False, destructive_hint=True, open_world_hint=True)
 
 
 @server.tool(annotations=READ_ONLY)
@@ -57,7 +61,7 @@ def search_products(query: str, limit: int = 10) -> list[dict[str, Any]]:
 
     Returns:
         Matching products with Id, Name, Brand, Price and availability. Use the
-        Id with get_product_details or add_to_basket.
+        Id with get_product_details or set_basket_quantity.
     """
     limit = max(1, min(limit, 50))
     return get_client().call(nemlig_cli.search_products, query, limit)
@@ -86,21 +90,26 @@ def get_basket() -> dict[str, Any]:
 
 
 @server.tool(annotations=WRITES)
-def add_to_basket(product_id: str, quantity: int = 1) -> dict[str, Any]:
-    """Add a product to the shopping basket.
+def set_basket_quantity(product_id: str, quantity: int = 1) -> dict[str, Any]:
+    """Set how many units of a product the basket should contain.
+
+    The quantity is absolute, not a delta. It is the number of units to end up
+    with, so setting 2 on a line that currently holds 5 removes 3 of them, and
+    setting 0 removes the product entirely. To add to a line that may already
+    exist, read its current Quantity with get_basket and pass the new total.
 
     This changes the user's real basket on nemlig.com. It does not place an
     order or charge anything -- the user completes checkout themselves.
 
     Args:
         product_id: Product Id from search_products, e.g. "5070417".
-        quantity: How many units to add. Must be positive.
+        quantity: Units the basket should end up with. 0 removes the product.
 
     Returns:
         The updated basket, with addresses redacted.
     """
-    if quantity < 1:
-        raise ValueError(f"quantity must be at least 1, got {quantity}")
+    if quantity < 0:
+        raise ValueError(f"quantity must be 0 or greater, got {quantity}")
     return scrub(get_client().call(nemlig_cli.add_to_basket, product_id, quantity))
 
 
