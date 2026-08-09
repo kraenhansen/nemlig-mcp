@@ -39,42 +39,88 @@ leave the server. See [`privacy.py`](src/nemlig_mcp/privacy.py).
 
 ## Setup
 
-Clone alongside the CLI — `pyproject.toml` expects it as a sibling:
+### 1. Clone both repos as siblings
+
+`pyproject.toml` resolves the CLI through a relative path, so the directory
+names and layout matter:
 
 ```
-code/
-├── nemlig_cli/
-└── nemlig-mcp/
+your-code-dir/
+├── nemlig_cli/     <- underscore
+└── nemlig-mcp/     <- hyphen
 ```
 
 ```bash
+cd ~/code
 git clone https://github.com/eisbaw/nemlig_cli.git
 git clone https://github.com/kraenhansen/nemlig-mcp.git
-cd nemlig-mcp && uv sync
+cd nemlig-mcp
+uv sync
 ```
 
-Credentials come from `NEMLIG_USER` / `NEMLIG_PASS`, falling back to the CLI's
-`~/.config/nemlig/login.json`.
+Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+.
 
-### Register with Claude
+### 2. Provide credentials
+
+Two options. **Prefer the config file** — an MCP config with a password in it
+is easy to commit by accident.
 
 ```bash
-claude mcp add nemlig -- uv --directory /absolute/path/to/nemlig-mcp run nemlig-mcp
+mkdir -p ~/.config/nemlig
+cat > ~/.config/nemlig/login.json <<'EOF'
+{"username": "you@example.com", "password": "your-password"}
+EOF
+chmod 600 ~/.config/nemlig/login.json
 ```
 
-Or in `.mcp.json`:
+This is the same file the CLI uses, so both share one login. Alternatively set
+`NEMLIG_USER` / `NEMLIG_PASS` in the environment, which takes precedence.
+
+### 3. Register the server
+
+```bash
+claude mcp add nemlig -- uv --directory ~/code/nemlig-mcp run nemlig-mcp
+```
+
+Or add it to `.mcp.json` (project-local) or `~/.claude.json` (global). Use an
+absolute path — `~` is not expanded inside `args`:
 
 ```json
 {
   "mcpServers": {
     "nemlig": {
       "command": "uv",
-      "args": ["--directory", "/absolute/path/to/nemlig-mcp", "run", "nemlig-mcp"],
-      "env": { "NEMLIG_USER": "you@example.com", "NEMLIG_PASS": "..." }
+      "args": ["--directory", "/Users/you/code/nemlig-mcp", "run", "nemlig-mcp"]
     }
   }
 }
 ```
+
+If you would rather not use the config file, add credentials here instead —
+and make sure the file is gitignored:
+
+```json
+      "env": { "NEMLIG_USER": "you@example.com", "NEMLIG_PASS": "..." }
+```
+
+### 4. Verify
+
+```bash
+uv run pytest                        # 6 tests, no network, no credentials
+uv run python tests/smoke_stdio.py   # spawns the server, lists its tools
+```
+
+Then ask Claude something like *"search nemlig for kaffebønner"*. The first
+call logs in, which takes a second or two; tokens are cached for 240s after
+that.
+
+Troubleshooting:
+
+| Symptom | Cause |
+|---|---|
+| `No nemlig.com credentials found` | Step 2 not done, or the config file is not valid JSON |
+| `ModuleNotFoundError: nemlig_cli` | Repos are not siblings, or the CLI directory is not named `nemlig_cli` |
+| Tool calls fail with `HTTPError` | Wrong username/password — nemlig returns 401 from the login endpoint |
 
 ## Notes on the upstream CLI
 
