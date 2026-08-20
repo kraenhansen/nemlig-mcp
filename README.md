@@ -15,6 +15,7 @@ curated tool surface.
 | `get_product_details` | no | Nutrition, allergens, attributes |
 | `get_basket` | no | Current basket contents |
 | `set_basket_quantity` | **yes** | Set units of a product in the basket (0 removes it) |
+| `set_basket_quantities` | **yes** | Same, for a list of products, applied one by one with retries |
 | `get_order_history` | no | Previous orders |
 | `get_order_details` | no | Line items of one past order |
 
@@ -27,14 +28,33 @@ server does not add them.
 
 The tool surface is an allowlist, not a filtered view of the whole API, so an
 endpoint cannot become reachable by accident. A test asserts this
-([`tests/test_server.py`](tests/test_server.py)). `set_basket_quantity` is the
-only tool that changes state, and every change it makes is reversible on the
-website.
+([`tests/test_server.py`](tests/test_server.py)). The two `set_basket_quantit*`
+tools are the only ones that change state, and every change they make is
+reversible on the website.
 
-It is annotated `destructive_hint=True`, because its quantity is absolute
+Both are annotated `destructive_hint=True`, because their quantity is absolute
 rather than a delta: lowering it discards units already in the basket, and 0
 removes the line. Clients use that hint to decide whether to confirm with the
 user, so understating it would be the dangerous direction to be wrong in.
+
+## Batching
+
+`set_basket_quantities` takes a list of `{product_id, quantity}` and applies it
+sequentially, so filling a basket from a recipe or a past order is one tool call
+rather than fifteen. A failing item is retried up to three times with a growing
+backoff, but only for failures another attempt could actually fix — a timeout, a
+429 or a 5xx. A request nemlig rejected outright is not retried, because it
+would be rejected again and only delay the rest of the batch.
+
+A failing item is recorded and skipped rather than aborting the run: the basket
+has already been half-changed by that point, so the useful thing to return is
+what happened to every item plus the resulting basket. The tool reports both,
+and reports the basket as `null` with a `basket_error` if even the final read
+fails, rather than throwing away the per-item results.
+
+Because quantities are absolute, a product may appear only once in the list;
+two lines for one product would silently mean "last one wins" rather than the
+sum a caller likely intended, so that is rejected up front.
 
 ## Privacy
 
@@ -102,7 +122,7 @@ and make sure the file is gitignored:
 ### 4. Verify
 
 ```bash
-uv run pytest                        # 9 tests, no network, no credentials
+uv run pytest                        # 20 tests, no network, no credentials
 uv run python tests/smoke_stdio.py   # spawns the server, lists its tools
 ```
 
@@ -137,7 +157,7 @@ stream, and that is cheap insurance against a failure mode this severe.
 ## Development
 
 ```bash
-uv run pytest                        # 9 tests, no network, no credentials
+uv run pytest                        # 20 tests, no network, no credentials
 uv run python tests/smoke_stdio.py   # end-to-end over stdio
 ```
 
