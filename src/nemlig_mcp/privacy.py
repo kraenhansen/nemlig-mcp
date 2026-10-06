@@ -1,9 +1,10 @@
 """Strip personal data from API responses before they reach the model.
 
 Basket and order-history responses embed the account holder's full name,
-street address, and phone number. None of that is needed to reason about
-groceries, and everything an MCP tool returns lands in the model's context and
-the conversation transcript. So it is removed by default.
+street address, phone number, email, door code and delivery instructions.
+None of that is needed to reason about groceries, and everything an MCP tool
+returns lands in the model's context and the conversation transcript. So it is
+removed by default.
 """
 
 from __future__ import annotations
@@ -14,7 +15,11 @@ from typing import Any
 PERSONAL_BLOCKS = frozenset({"InvoiceAddress", "DeliveryAddress"})
 
 # Individual identifying fields that appear outside those blocks.
-PERSONAL_FIELDS = frozenset({"CustomerName", "MobileNumber", "PhoneNumber", "ContactPerson"})
+# DoorCode and UnattendedNotes give physical access to the home.
+PERSONAL_FIELDS = frozenset({
+    "CustomerName", "MobileNumber", "PhoneNumber", "ContactPerson",
+    "Email", "DoorCode", "UnattendedNotes",
+})
 
 REDACTED = "[redacted by nemlig-mcp]"
 

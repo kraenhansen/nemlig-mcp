@@ -287,6 +287,14 @@ def test_scrub_removes_addresses_but_keeps_line_items():
     assert result["BasketGuid"] == "abc"
 
 
+def test_scrub_removes_top_level_contact_and_access_fields():
+    """These sit directly on the basket, outside the address blocks."""
+    payload = {"Email": "a@example.com", "DoorCode": "1234", "UnattendedNotes": "key under mat", "TotalPrice": 29}
+    result = scrub(payload)
+
+    assert result == {"Email": REDACTED, "DoorCode": REDACTED, "UnattendedNotes": REDACTED, "TotalPrice": 29}
+
+
 def test_scrub_reaches_into_nested_orders():
     payload = {"Orders": [{"Id": 1, "DeliveryAddress": {"StreetName": "x"}, "Total": 10.0}]}
     result = scrub(payload)
