@@ -236,14 +236,70 @@ def test_set_basket_quantities_reports_an_unreadable_basket_without_losing_resul
     assert "500" in result["basket_error"]
 
 
-def test_set_basket_quantities_scrubs_the_returned_basket():
+def test_set_basket_quantities_scrubs_the_full_basket():
     with fake_client(
         lambda *args: {"Lines": []},
         get_basket=lambda: {"DeliveryAddress": {"StreetName": "x"}, "Lines": []},
     ):
-        result = set_basket_quantities([BasketItem(product_id="701025", quantity=1)])
+        result = set_basket_quantities(
+            [BasketItem(product_id="701025", quantity=1)], full_basket=True
+        )
 
     assert result["basket"]["DeliveryAddress"] == REDACTED
+
+
+RAW_BASKET = {
+    "TotalPrice": 812.5,
+    "Email": "someone@example.com",
+    "TrackingModel": {"items": ["large analytics payload"]},
+    "Lines": [
+        {
+            "Id": "5012105",
+            "Name": "Hakket spinat øko.",
+            "Quantity": 2,
+            "ItemPrice": 23.25,
+            "Price": 46.5,
+            "CategoryPath": "0900000000#Frost",
+            "AlternativeProducts": [],
+        }
+    ],
+}
+
+
+def test_set_basket_quantities_summarises_the_basket_by_default():
+    """The raw basket overflowed a client's tool-result limit at ~68 KB."""
+    with fake_client(lambda *args: {}, get_basket=lambda: RAW_BASKET):
+        result = set_basket_quantities([BasketItem(product_id="5012105", quantity=2)])
+
+    assert result["basket"] == {
+        "TotalPrice": 812.5,
+        "Lines": [
+            {
+                "Id": "5012105",
+                "Name": "Hakket spinat øko.",
+                "Quantity": 2,
+                "ItemPrice": 23.25,
+                "Price": 46.5,
+            }
+        ],
+    }
+
+
+def test_set_basket_quantities_returns_the_full_basket_on_request():
+    with fake_client(lambda *args: {}, get_basket=lambda: RAW_BASKET):
+        result = set_basket_quantities(
+            [BasketItem(product_id="5012105", quantity=2)], full_basket=True
+        )
+
+    assert result["basket"] == {**RAW_BASKET, "Email": REDACTED}
+
+
+def test_set_basket_quantity_summarises_the_basket_by_default():
+    with fake_client(lambda *args: RAW_BASKET):
+        result = set_basket_quantity("5012105", 2)
+
+    assert "TrackingModel" not in result
+    assert "CategoryPath" not in result["Lines"][0]
 
 
 def test_set_basket_quantities_rejects_a_repeated_product():

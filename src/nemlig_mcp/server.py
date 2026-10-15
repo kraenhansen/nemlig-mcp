@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 from collections import Counter
 from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Annotated, Any, TypeVar
 
 import nemlig_cli
 import requests
@@ -64,6 +64,43 @@ MAX_RETRIES = 3
 MAX_ATTEMPTS = MAX_RETRIES + 1
 RETRY_BACKOFF_SECONDS = 0.5
 
+# The raw basket is ~1.5 KB per line plus a large analytics blob, enough to
+# overflow a client's tool-result limit. Only these fields are returned unless
+# the caller asks for the full basket.
+BASKET_FIELDS = (
+    "NumberOfProducts",
+    "TotalProductsPrice",
+    "TotalProductDiscountPrice",
+    "TotalBagsPrice",
+    "TotalDepositsPrice",
+    "DeliveryPrice",
+    "TotalPrice",
+    "IsMinTotalValid",
+    "MinimumOrderTotal",
+    "IsMaxTotalValid",
+    "MaximumOrderTotal",
+    "FormattedDeliveryTime",
+    "ValidationFailures",
+    "Coupons",
+    "Lines",
+)
+BASKET_LINE_FIELDS = (
+    "Id",
+    "Name",
+    "Brand",
+    "Description",
+    "Quantity",
+    "ItemPrice",
+    "Price",
+    "DiscountSavings",
+    "CampaignAttribute",
+)
+
+FULL_BASKET_DESCRIPTION = (
+    "Return every field nemlig.com sends. Large: tens of KB for a typical "
+    "basket. Leave false unless a field outside the summary is needed."
+)
+
 
 class BasketItem(BaseModel):
     """One product line in a set_basket_quantities call."""
@@ -110,6 +147,21 @@ def _retrying(call: Callable[[], T]) -> tuple[T | None, int, str | None]:
     return None, MAX_ATTEMPTS, error
 
 
+def _pick(source: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
+    return {field: source[field] for field in fields if field in source}
+
+
+def _present_basket(basket: dict[str, Any], full: bool) -> dict[str, Any]:
+    """Scrub the basket and, unless ``full``, trim it to the summary fields."""
+    basket = scrub(basket)
+    if full:
+        return basket
+    summary = _pick(basket, BASKET_FIELDS)
+    if "Lines" in summary:
+        summary["Lines"] = [_pick(line, BASKET_LINE_FIELDS) for line in summary["Lines"]]
+    return summary
+
+
 def _apply_quantity(item: BasketItem) -> dict[str, Any]:
     """Set one product's quantity, reporting the outcome instead of raising."""
     _, attempts, error = _retrying(
@@ -154,16 +206,25 @@ def get_product_details(product_id: str) -> dict[str, Any]:
 
 
 @server.tool(annotations=READ_ONLY)
-def get_basket() -> dict[str, Any]:
+def get_basket(
+    full_basket: Annotated[bool, Field(description=FULL_BASKET_DESCRIPTION)] = False,
+) -> dict[str, Any]:
     """Show the current shopping basket with line items and prices.
 
-    Delivery and invoice addresses are redacted.
+    By default returns a summary: totals, order limits, delivery time and, per
+    line, Id, Name, Brand, Description, Quantity, ItemPrice (per unit), Price
+    (line total), DiscountSavings and CampaignAttribute. Personal data is
+    redacted either way.
     """
-    return scrub(get_client().call(nemlig_cli.get_basket))
+    return _present_basket(get_client().call(nemlig_cli.get_basket), full_basket)
 
 
 @server.tool(annotations=WRITES)
-def set_basket_quantity(product_id: str, quantity: int = 1) -> dict[str, Any]:
+def set_basket_quantity(
+    product_id: str,
+    quantity: int = 1,
+    full_basket: Annotated[bool, Field(description=FULL_BASKET_DESCRIPTION)] = False,
+) -> dict[str, Any]:
     """Set how many units of a product the basket should contain.
 
     The quantity is absolute, not a delta. It is the number of units to end up
@@ -179,15 +240,20 @@ def set_basket_quantity(product_id: str, quantity: int = 1) -> dict[str, Any]:
         quantity: Units the basket should end up with. 0 removes the product.
 
     Returns:
-        The updated basket, with addresses redacted.
+        The updated basket, summarised as in get_basket unless full_basket.
     """
     if quantity < 0:
         raise ValueError(f"quantity must be 0 or greater, got {quantity}")
-    return scrub(get_client().call(nemlig_cli.add_to_basket, product_id, quantity))
+    return _present_basket(
+        get_client().call(nemlig_cli.add_to_basket, product_id, quantity), full_basket
+    )
 
 
 @server.tool(annotations=WRITES)
-def set_basket_quantities(items: list[BasketItem]) -> dict[str, Any]:
+def set_basket_quantities(
+    items: list[BasketItem],
+    full_basket: Annotated[bool, Field(description=FULL_BASKET_DESCRIPTION)] = False,
+) -> dict[str, Any]:
     """Set the quantities of several products in one call.
 
     Each item is applied in order with the same absolute semantics as
@@ -210,8 +276,9 @@ def set_basket_quantities(items: list[BasketItem]) -> dict[str, Any]:
     Returns:
         results: one entry per requested item, in order, each with status "ok"
         or "failed", the number of attempts made, and the error if it failed.
-        basket: the resulting basket with addresses redacted, or null if it
-        could not be read, in which case basket_error says why.
+        basket: the resulting basket, summarised as in get_basket unless
+        full_basket, or null if it could not be read, in which case
+        basket_error says why.
     """
     if not items:
         raise ValueError("items must not be empty")
@@ -230,7 +297,7 @@ def set_basket_quantities(items: list[BasketItem]) -> dict[str, Any]:
 
     return {
         "results": results,
-        "basket": None if basket is None else scrub(basket),
+        "basket": None if basket is None else _present_basket(basket, full_basket),
         "basket_error": basket_error,
     }
 
