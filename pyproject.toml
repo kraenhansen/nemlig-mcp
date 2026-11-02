@@ -11,6 +11,9 @@ dependencies = [
     # spinner, optional deps as extras). Not on PyPI, so installed from git;
     # uv.lock pins the exact commit.
     "nemlig-cli @ git+https://github.com/eisbaw/nemlig_cli.git@main",
+    # nemlig_cli imports readline at module level, which does not exist on
+    # Windows. pyreadline3 provides it.
+    "pyreadline3; sys_platform == 'win32'",
 ]
 
 [project.scripts]
